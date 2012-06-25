@@ -27,9 +27,9 @@ let concat items =
     items |> Seq.map (fun o -> o.ToString()) |> String.concat ", "
 
 let parseKind (kindString:string) =
-    let isKind, kind = System.Enum.TryParse<DieKind> kindString
-    if isKind then kind
-    else failwith (sprintf "Unrecognized die kind '%s'" kindString)
+    let parseOk, parsedKind = System.Enum.TryParse<DieKind> kindString
+    if not parseOk then failwith (sprintf "Unrecognized die kind '%s'" kindString)
+    else parsedKind
 
 let parseCommand (commandString:string) =
     let segments = commandString.Split ([| ' '; '\t' |], System.StringSplitOptions.RemoveEmptyEntries) |> List.ofArray
@@ -38,11 +38,11 @@ let parseCommand (commandString:string) =
     //no command is allways a single roll
     | [] -> Roll 1
     //match all zero-argument commands
-    | command::[] ->
+    | [command] ->
         //if the command is an integer, treat it as a roll count
-        let isNumber, number = System.Int32.TryParse(command)
-        if isNumber then 
-            Roll number
+        let parseOk, parsedNumber = System.Int32.TryParse(command)
+        if parseOk then 
+            Roll parsedNumber
         else 
             match command with
             | "?" | "help" -> Help
@@ -51,7 +51,7 @@ let parseCommand (commandString:string) =
             | "tell"       -> Tell
             | _            -> fail' ()
     //match all single-argument commands
-    | command::[arg] ->
+    | [command; arg] ->
         match command with
         | "set" -> SetKind (parseKind arg)
         | _     -> fail' ()
