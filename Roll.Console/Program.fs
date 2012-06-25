@@ -1,10 +1,11 @@
 ﻿let help = @"The following operations are supported:
-    - ? or help        -> prints this text
-    - reseed           -> reseeds the random number generator
-    - exit             -> exit the application
-    - <return> or roll -> rolls the die
-    - tell             -> prints the current application state
-    - set <die kind>   -> sets the current application die kind"
+    - ? or help  -> prints this text
+    - reseed     -> reseeds the random number generator
+    - exit       -> exit the application
+    - <return>   -> rolls the die once
+    - <n>        -> rolls the die n times
+    - tell       -> prints the current application state
+    - set <kind> -> sets the current application die kind"
 
 type DieKind =
 | d6 = 6
@@ -12,65 +13,86 @@ type DieKind =
 | d12 = 12
 | d20 = 20
 
-let makeKind (kindString:string) =
-    let ok, value = System.Enum.TryParse<DieKind>(kindString)
-    if ok then value else failwith (sprintf "Unrecognized die kind '%s'" kindString)
-
-type State = { Generator : System.Random; Kind : DieKind }
-    with
-    member s.RollDie () =
-        s.Generator.Next(0, ((int) s.Kind) + 1)
-
 type Command =
-| SetKind of string
-| Help
+| SetKind of DieKind
+| Roll of int
 | Reseed
-| Roll
+| Help
 | Exit
 | Tell
-| Unknown
-    with 
-        static member create (commandString:string) =
-            let splitChars = [|' '; '\t'|]
-            let arguments = commandString.Split(splitChars, System.StringSplitOptions.RemoveEmptyEntries);
-            match arguments.[0] with
+
+type State = { Generator : System.Random; Kind : DieKind }
+
+let concat items = 
+    items |> Seq.map (fun o -> o.ToString()) |> String.concat ", "
+
+let parseKind (kindString:string) =
+    let isKind, kind = System.Enum.TryParse<DieKind> kindString
+    if isKind then kind
+    else failwith (sprintf "Unrecognized die kind '%s'" kindString)
+
+let parseCommand (commandString:string) =
+    let segments = commandString.Split ([| ' '; '\t' |], System.StringSplitOptions.RemoveEmptyEntries) |> List.ofArray
+    let fail' () = failwith "What?"
+    match segments with
+    //no command is allways a single roll
+    | [] -> Roll 1
+    //match all zero-argument commands
+    | command::[] ->
+        //if the command is an integer, treat it as a roll count
+        let isNumber, number = System.Int32.TryParse(command)
+        if isNumber then 
+            Roll number
+        else 
+            match command with
             | "?" | "help" -> Help
-            | "reseed" -> Reseed
-            | "exit" -> Exit
-            | "roll" -> Roll
-            | "tell" -> Tell
-            | "set" -> SetKind arguments.[1]
-            | _ -> Unknown
+            | "reseed"     -> Reseed
+            | "exit"       -> Exit
+            | "tell"       -> Tell
+            | _            -> fail' ()
+    //match all single-argument commands
+    | command::[arg] ->
+        match command with
+        | "set" -> SetKind (parseKind arg)
+        | _     -> fail' ()
+    //all other strings fail
+    | _ -> fail' ()
 
 let seedState kind = { Generator = new System.Random(); Kind = kind }
 
-let processCommand state command =
-    let none' unit = None
+let doTell state =
+    let allKinds = System.Enum.GetValues typeof<DieKind> |> Seq.cast<DieKind>
+    printfn "Current die: %A, available: %s" state.Kind (allKinds |> concat)
+
+let doRoll rolls state =
+    let rolls = seq { for i in 1..rolls do yield state.Generator.Next (0, (int state.Kind) + 1) } 
+    printfn "Rolled %s" (rolls |> concat)
+
+let handleCommand state command =
+    let none unit = None
     match command with
-    | Unknown -> none' (printfn "What?")
-    | Help -> none' (printfn "%s" help)
-    | SetKind kind -> Some (seedState (makeKind kind))
-    | Reseed -> Some (seedState state.Kind)
-    | Exit -> none' (exit 0)
-    | Tell -> none' (printfn "Current die kind: %A, available kinds: %A" state.Kind (System.Enum.GetValues(typeof<DieKind>)))
-    | Roll -> 
-        let roll = state.RollDie ()
-        printfn "Rolled %i" roll
-        none' ()
+    | SetKind kind -> Some (seedState kind)
+    | Reseed       -> Some (seedState state.Kind)
+    | Roll times   -> none (doRoll times state)
+    | Help         -> none (printfn "%s" help)
+    | Tell         -> none (doTell state)
+    | Exit         -> none (exit 0)
     
+//input defines an infinite sequence of clean user commands
 let input = seq {
     while true do
         printf "> "
-        let line = System.Console.ReadLine().Trim().ToLower()
-        if line.Length = 0 then yield Roll
-        else yield Command.create line
+        yield System.Console.ReadLine().Trim().ToLower()
 }
 
-let fold state command =
+//main handles parsing the command, applying it and handling any errors
+let main state commandString =
     try
-        match processCommand state command with
+        let command = (parseCommand commandString)
+        match handleCommand state command with
         | Some newState -> newState
         | None -> state
+
     with ex ->
         printfn "ERROR: %s" ex.Message
         state
@@ -78,4 +100,4 @@ let fold state command =
 let initialState = seedState DieKind.d20
 
 printfn "Roll - type help or ? for help"
-Seq.fold fold initialState input |> ignore
+input |> Seq.fold main initialState |> ignore
