@@ -4,6 +4,7 @@
     - exit       -> exit the application
     - <return>   -> rolls the die once
     - <n>        -> rolls the die n times
+    - roll <n>   -> rolls the die n times (n is optional)
     - tell       -> prints the current application state
     - set <kind> -> sets the current application die kind"
 
@@ -34,17 +35,22 @@ let parseKind (kindString:string) =
 let parseCommand (commandString:string) =
     let segments = commandString.Split ([| ' '; '\t' |], System.StringSplitOptions.RemoveEmptyEntries) |> List.ofArray
     let fail' () = failwith "What?"
+    let tryParseInt s = 
+        match System.UInt32.TryParse(s) with
+        | (true,  n) -> Some (int n)
+        | (false, _) -> None
+
     match segments with
     //no command is allways a single roll
     | [] -> Roll 1
     //match all zero-argument commands
     | [command] ->
         //if the command is an integer, treat it as a roll count
-        let parseOk, parsedNumber = System.Int32.TryParse(command)
-        if parseOk then 
-            Roll parsedNumber
-        else 
+        match tryParseInt command with
+        | Some n -> Roll n
+        | None ->
             match command with
+            | "roll"       -> Roll 1
             | "?" | "help" -> Help
             | "reseed"     -> Reseed
             | "exit"       -> Exit
@@ -53,8 +59,9 @@ let parseCommand (commandString:string) =
     //match all single-argument commands
     | [command; arg] ->
         match command with
-        | "set" -> SetKind (parseKind arg)
-        | _     -> fail' ()
+        | "roll" -> match tryParseInt arg with Some n -> Roll n | None -> fail' ()
+        | "set"  -> SetKind (parseKind arg)
+        | _      -> fail' ()
     //all other strings fail
     | _ -> fail' ()
 
@@ -65,7 +72,7 @@ let doTell state =
     printfn "Current die: %A, available: %s" state.Kind (allKinds |> concat)
 
 let doRoll rolls state =
-    let rolls = seq { for i in 1..rolls do yield state.Generator.Next (0, (int state.Kind) + 1) } 
+    let rolls = seq { for i in 1..rolls do yield state.Generator.Next (1, (int state.Kind) + 1) } 
     printfn "Rolled %s" (rolls |> concat)
 
 let handleCommand state command =
@@ -78,8 +85,8 @@ let handleCommand state command =
     | Tell         -> none (doTell state)
     | Exit         -> none (exit 0)
     
-//input defines an infinite sequence of clean user commands
-let input = seq {
+//userInput defines an infinite sequence of clean user commands
+let userInput = seq {
     while true do
         printf "> "
         yield System.Console.ReadLine().Trim().ToLower()
@@ -100,4 +107,11 @@ let main state commandString =
 let initialState = seedState DieKind.d20
 
 printfn "Roll - type help or ? for help"
+
+//add a default "tell" command to the beginning of the input
+let input = seq {
+    yield "tell"
+    yield! userInput
+}
+
 input |> Seq.fold main initialState |> ignore
